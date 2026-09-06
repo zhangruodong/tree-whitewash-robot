@@ -1,0 +1,27 @@
+# Keil MDK 编译产物（自动生成，不提交）
+Listings/
+Objects/
+DebugConfig/
+*.o
+*.crf
+*.d
+*.axf
+*.hex
+*.lnp
+*.lst
+*.map
+*.htm
+*.dep
+*.bak
+*.uvguix.*
+*.uvoptx
+*.dbgconf
+JLinkLog.txt
+*.iex
+*.scvd
+
+# 编辑器 / 系统
+.vscode/
+*.suo
+Thumbs.db
+Desktop.ini
