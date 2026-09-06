@@ -9,7 +9,7 @@ int main(void){
 		OLED_ShowString(1, 1, "HelloWorld!");
 		Self_Check_Routine();
 	 while(1){		 
-		OLED_ShowNum(2,1,timer_counter,8);
+		// OLED_ShowNum(2,1,timer_counter,8);
 		System_StateMachine();	
 		
 		 

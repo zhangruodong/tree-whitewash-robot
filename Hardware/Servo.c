@@ -1,47 +1,103 @@
 #include "stm32f10x.h"                  // Device header
 #include "DPWM.h"
+#include "Servo.h"
 
-/**
-  * º¯    Êı£º¶æ»ú³õÊ¼»¯
-  * ²Î     Êı£ºÎŞ
-  * ·µ »Ø Öµ£ºÎŞ
-  */
+extern volatile uint32_t timer_counter;  // 1ms å®šæ—¶è®¡æ•°ï¼ˆå®šä¹‰åœ¨ system.cï¼‰
+
+// èˆµæœºè¿åŠ¨å®ä¾‹
+static ServoMotion servo_instances[MAX_SERVOS] = {0};
+
+// åº•å±‚ï¼šèˆµæœº1åˆå§‹åŒ–
 void Servo_Init(void)
 {
 	PWM_TIM2_Common_Init();
-	DPWM_Init();									//³õÊ¼»¯¶æ»úµÄµ×²ãPWM
+	DPWM_Init();
 }
 
-/**
-  * º¯    Êı£º¶æ»úÉèÖÃ½Ç¶È
-  * ²Î    Êı£ºAngle ÒªÉèÖÃµÄ¶æ»ú½Ç¶È£¬·¶Î§£º0~180
-  * ·µ »Ø Öµ£ºÎŞ
-  */
+// åº•å±‚ï¼šèˆµæœº1ç›´æ¥è®¾è§’åº¦ï¼ˆ0~180Â° çº¿æ€§æ˜ å°„åˆ° 0.5~2.5msï¼‰
 void Servo_SetAngle(float Angle)
 {
-	DPWM_SetCompare3(Angle / 180 * 2000 + 500);	//ÉèÖÃÕ¼¿Õ±È
-												//½«½Ç¶ÈÏßĞÔ±ä»»£¬¶ÔÓ¦µ½¶æ»úÒªÇóµÄÕ¼¿Õ±È·¶Î§ÉÏ
+	DPWM_SetCompare3(Angle / 180 * 2000 + 500);
 }
 
-
-
-/**
-  * º¯    Êı£º¶æ»ú³õÊ¼»¯
-  * ²Î     Êı£ºÎŞ
-  * ·µ »Ø Öµ£ºÎŞ
-  */
+// åº•å±‚ï¼šèˆµæœº2åˆå§‹åŒ–
 void Servo2_Init(void)
 {
-	DPWM2_Init();									//³õÊ¼»¯¶æ»úµÄµ×²ãPWM
+	PWM_TIM2_Common_Init();
+	DPWM2_Init();
 }
 
-/**
-  * º¯    Êı£º¶æ»úÉèÖÃ½Ç¶È
-  * ²Î    Êı£ºAngle ÒªÉèÖÃµÄ¶æ»ú½Ç¶È£¬·¶Î§£º0~180
-  * ·µ »Ø Öµ£ºÎŞ
-  */
+// åº•å±‚ï¼šèˆµæœº2ç›´æ¥è®¾è§’åº¦
 void Servo2_SetAngle(float Angle)
 {
-	DPWM2_SetCompare4(Angle / 180 * 2000 + 500);	//ÉèÖÃÕ¼¿Õ±È
-												//½«½Ç¶ÈÏßĞÔ±ä»»£¬¶ÔÓ¦µ½¶æ»úÒªÇóµÄÕ¼¿Õ±È·¶Î§ÉÏ
+	DPWM2_SetCompare4(Angle / 180 * 2000 + 500);
+}
+
+// å¹³æ»‘è¿åŠ¨ï¼šåˆå§‹åŒ–æ‰€æœ‰å®ä¾‹
+void ServoMotion_Init(void)
+{
+	for (int i = 0; i < MAX_SERVOS; i++) {
+		servo_instances[i].is_active = 0;
+	}
+}
+
+// å¹³æ»‘è¿åŠ¨ï¼šå¯åŠ¨ä¸€æ¬¡è¿åŠ¨ï¼ˆéé˜»å¡ï¼Œåªç™»è®°å¹¶é¢„è®¡ç®—ç³»æ•°ï¼‰
+void Servo_StartSmoothMotion(uint8_t servo_id, float start_angle,
+                             float end_angle, uint32_t duration_ms)
+{
+	if (servo_id >= MAX_SERVOS || duration_ms == 0) return;
+
+	float T = (float)duration_ms;
+	float dy = end_angle - start_angle;
+
+	servo_instances[servo_id].is_active = 1;
+	servo_instances[servo_id].start_angle = start_angle;
+	servo_instances[servo_id].end_angle = end_angle;
+	servo_instances[servo_id].duration_ms = duration_ms;
+	servo_instances[servo_id].start_time = timer_counter;
+
+	// é¢„è®¡ç®—ä¸‰æ¬¡ Hermiteï¼ˆsmoothstepï¼‰ç³»æ•°ï¼šä¸¤ç«¯é€Ÿåº¦ä¸ºé›¶
+	servo_instances[servo_id].coeff.a = start_angle;
+	servo_instances[servo_id].coeff.b = 0.0f;
+	servo_instances[servo_id].coeff.c = 3.0f * dy / (T * T);
+	servo_instances[servo_id].coeff.d = -2.0f * dy / (T * T * T);
+}
+
+// å¹³æ»‘è¿åŠ¨ï¼šæ¯è½®ä¸»å¾ªç¯è°ƒç”¨ï¼Œæ¨è¿›æ‰€æœ‰è¿›è¡Œä¸­çš„è¿åŠ¨ï¼ˆéé˜»å¡ï¼‰
+void Servo_UpdateAllMotions(void)
+{
+	for (uint8_t i = 0; i < MAX_SERVOS; i++) {
+		if (!servo_instances[i].is_active) continue;
+
+		uint32_t elapsed = timer_counter - servo_instances[i].start_time;
+		float angle;
+
+		if (elapsed >= servo_instances[i].duration_ms) {
+			// è¿åŠ¨ç»“æŸï¼šé’‰ä½æœ€ç»ˆè§’åº¦å¹¶åœç”¨
+			angle = servo_instances[i].end_angle;
+			servo_instances[i].is_active = 0;
+		} else {
+			SplineCoeff c = servo_instances[i].coeff;
+			float t = (float)elapsed;
+			angle = c.a + c.b * t + c.c * t * t + c.d * t * t * t;
+		}
+
+		if (i == 0) Servo_SetAngle(angle);
+		else        Servo2_SetAngle(angle);
+	}
+}
+
+// å–æ¶ˆæ‰€æœ‰è¿›è¡Œä¸­çš„è¿åŠ¨ï¼ˆæ€¥åœæ—¶è°ƒç”¨ï¼‰
+void Servo_StopAllMotions(void)
+{
+	for (uint8_t i = 0; i < MAX_SERVOS; i++) {
+		servo_instances[i].is_active = 0;
+	}
+}
+
+// æŸ¥è¯¢æŸèˆµæœºæ˜¯å¦è¿˜åœ¨è¿åŠ¨
+uint8_t Servo_IsMoving(uint8_t servo_id)
+{
+	if (servo_id >= MAX_SERVOS) return 0;
+	return servo_instances[servo_id].is_active;
 }

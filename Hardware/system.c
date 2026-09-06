@@ -1,72 +1,72 @@
 #include "stm32f10x.h"
 #include <stdlib.h>
-#include <math.h> 
+#include <math.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include "Delay.h"
 #include "OLED.h"
 #include "HCSR04.h"
-#include "ADCServo.h"
 #include "MotorDriver.h"
 #include "USART.h"
 #include "system.h"
 #include "string.h"
 #include "SelfTest.h"
-#include  "PumpBuzzer.h"
-#include  "Servo.h"
-#include  "Motor.h"
-// È«¾Ö±äÁ¿ÓÃÓÚ¼ÇÂ¼¶¨Ê±Æ÷ÖÐ¶Ï´ÎÊý
+#include "PumpBuzzer.h"
+#include "Servo.h"
+#include "Motor.h"
+
+// å‡é™ç”µæœºæ–¹å‘ï¼ˆ80=å‡ã€-80=é™ï¼Œå·²å®žæœºç¡®è®¤ï¼‰
+#define LIFT_UP_SPEED      80
+#define LIFT_DOWN_SPEED   -80
+// å‡é™å…¨è¡Œç¨‹æ—¶é—´ï¼ˆæ¯«ç§’ï¼ŒæŒ‰å®žæœºæ ¡å‡†ï¼‰
+#define LIFT_UP_TIME_MS    10000   // ä½Žä½â†’é«˜ä½ï¼ˆ10ç§’ï¼‰
+#define LIFT_DOWN_TIME_MS  10000   // é«˜ä½â†’ä½Žä½ï¼ˆ10ç§’ï¼‰
+
+// å…¨å±€å˜é‡ï¼š1ms å®šæ—¶è®¡æ•°ï¼ˆTIM1 æ¯ 1ms ä¸­æ–­ä¸€æ¬¡ï¼‰
 volatile uint32_t timer_counter = 0;
-static SystemCtrl sys_ctrl = {STATE_WAIT, 0, 0};
+static SystemCtrl sys_ctrl = {STATE_WAIT, 0};
+static RunMode run_mode = MODE_AUTO;   // å½“å‰æ¨¡å¼ï¼šè‡ªåŠ¨ / æ€¥åœé”å®š
+static bool paint_first_enter = true;  // æ¶‚ç™½çŠ¶æ€é¦–æ¬¡è¿›å…¥æ ‡å¿—
+static uint8_t lift_is_up = 0;         // å‡é™å½“å‰ä½ç½®ï¼š0=ä½Žä½(ä¸‹é™ä½)ï¼Œ1=é«˜ä½
 
-///* Ö¸Áîµ½×´Ì¬Ó³Éä */
-//static const struct {
-//    uint8_t cmd;
-//    SystemState state;
-//} cmd_state_map[] = {
-//    {CMD_NO_TREE,    STATE_SEARCH_TREE},
-//    {CMD_UNTREATED,  STATE_APPROACH_TREE},
-//    {CMD_STOP,       STATE_WAIT_CMD}
-//};
-
-// TIM1³õÊ¼»¯º¯Êý
+// TIM1åˆå§‹åŒ–å‡½æ•°ï¼ˆ1ms èŠ‚æ‹ï¼‰
 void TIM1_Init(void) {
     TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
     NVIC_InitTypeDef NVIC_InitStructure;
 
-    /* 1. Ê¹ÄÜTIM1Ê±ÖÓ */
+    /* 1. ä½¿èƒ½TIM1æ—¶é’Ÿ */
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM1, ENABLE);
 
-    /* 2. ÅäÖÃ¶¨Ê±Æ÷²ÎÊý */
-    TIM_TimeBaseStructure.TIM_Prescaler = 7200 - 1;     // Ô¤·ÖÆµÖµ£¨72MHz / 7200 = 10KHz£©
-    TIM_TimeBaseStructure.TIM_Period = 10000 - 1;       // ×Ô¶¯ÖØ×°ÔØÖµ£¨10KHz / 10000 = 1ÃëÖÐ¶ÏÒ»´Î£©
+    /* 2. é…ç½®å®šæ—¶å™¨å‚æ•° */
+    TIM_TimeBaseStructure.TIM_Prescaler = 7200 - 1;     // é¢„åˆ†é¢‘å€¼ï¼š72MHz / 7200 = 10KHz
+    TIM_TimeBaseStructure.TIM_Period = 10 - 1;          // è‡ªåŠ¨é‡è£…å€¼ï¼š10KHz / 10 = 1ms ä¸­æ–­ä¸€æ¬¡
     TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
     TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
-    TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;    // ¸ß¼¶¶¨Ê±Æ÷ÌØÓÐ²ÎÊý
+    TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
     TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
 
-    /* 3. Ê¹ÄÜ¶¨Ê±Æ÷¸üÐÂÖÐ¶Ï */
+    /* 3. ä½¿èƒ½å®šæ—¶å™¨æ›´æ–°ä¸­æ–­ */
     TIM_ITConfig(TIM1, TIM_IT_Update, ENABLE);
 
-    /* 4. ÅäÖÃNVICÖÐ¶ÏÓÅÏÈ¼¶ */
+    /* 4. é…ç½®NVICä¸­æ–­ä¼˜å…ˆçº§ */
     NVIC_InitStructure.NVIC_IRQChannel = TIM1_UP_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 
-    /* 5. Æô¶¯¶¨Ê±Æ÷ */
+    /* 5. å¯åŠ¨å®šæ—¶å™¨ */
     TIM_Cmd(TIM1, ENABLE);
 }
 
-// GPIO³õÊ¼»¯£¨ÅäÖÃPB15ÎªÊä³ö£©
+// GPIOåˆå§‹åŒ–å‡½æ•°ï¼šPB15ä¸ºè¾“å‡º
 void GPIO15_Init(void) {
     GPIO_InitTypeDef GPIO_InitStructure;
 
-    /* Ê¹ÄÜGPIOBÊ±ÖÓ */
+    /* ä½¿èƒ½GPIOBæ—¶é’Ÿ */
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
 
-    /* ÅäÖÃPB15ÎªÍÆÍìÊä³ö */
+    /* é…ç½®PB15ä¸ºæŽ¨æŒ½è¾“å‡º */
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_15;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
@@ -74,181 +74,227 @@ void GPIO15_Init(void) {
 }
 
 
-// TIM1¸üÐÂÖÐ¶Ï·þÎñº¯Êý
+// TIM1æ›´æ–°ä¸­æ–­æœåŠ¡å‡½æ•°
 void TIM1_UP_IRQHandler(void) {
+    static uint16_t heartbeat_div = 0;
     if (TIM_GetITStatus(TIM1, TIM_IT_Update) != RESET) {
-        TIM_ClearITPendingBit(TIM1, TIM_IT_Update); // Çå³ýÖÐ¶Ï±êÖ¾
-        timer_counter++;
-        GPIO_WriteBit(GPIOB, GPIO_Pin_15, 
-                     (BitAction)(1 - GPIO_ReadOutputDataBit(GPIOB, GPIO_Pin_15))); // ·­×ªPB15
+        TIM_ClearITPendingBit(TIM1, TIM_IT_Update); // æ¸…é™¤ä¸­æ–­æ ‡å¿—
+        timer_counter++;                            // æ¯ 1ms åŠ ä¸€
+
+        // å¿ƒè·³ç¯ï¼šæ¯ 500ms ç¿»è½¬ä¸€æ¬¡ï¼Œä¿æŒ 1Hz å¯è§é—ªçƒï¼ˆä¸éš 1ms èŠ‚æ‹é«˜é¢‘ç¿»è½¬ï¼‰
+        if (++heartbeat_div >= 500) {
+            heartbeat_div = 0;
+            GPIO_WriteBit(GPIOB, GPIO_Pin_15,
+                         (BitAction)(1 - GPIO_ReadOutputDataBit(GPIOB, GPIO_Pin_15)));
+        }
     }
 }
 
-void Hardware_Init(void)  //ÍâÉè³õÊ¼»¯
+void Hardware_Init(void)  //ç¡¬ä»¶åˆå§‹åŒ–
 {
-	Servo_Init();		  //¶æ»ú³õÊ¼»¯
-	MotorDriver1_Init();										//µç»úÇý¶¯Ä£¿é1³õÊ¼»¯£¨×ó£©
-	MotorDriver2_Init();										//µç»úÇý¶¯Ä£¿é2³õÊ¼»¯ÓÒ£©
-	SMotor3_Init();		  //Ö±Á÷µç»ú³õÊ¼»¯£¨Ö±Á÷µç»ú3£¬Éý½µ¸Ë£©
-	BUMP_Init();		  //Ë®±Ã³õÊ¼»¯
-	HC_SR04_Init();		  //³¬Éù²¨
-	Timer_Init(); 		  //¶¨Ê±Æ÷
-	FMQ_Init();			  //·äÃùÆ÷³õÊ¼»¯
-	ADC_GPIO_Init();		//adc³õÊ¼»¯
-	ADC_Init_Channel4();	//adc
+	Servo_Init();		  //èˆµæœºåˆå§‹åŒ–
+	Servo2_Init();		  //èˆµæœº2åˆå§‹åŒ–
+	ServoMotion_Init();	  //èˆµæœºå¹³æ»‘è¿åŠ¨åˆå§‹åŒ–
+	MotorDriver1_Init();										//ç”µæœºé©±åŠ¨æ¨¡å—1åˆå§‹åŒ–ï¼ˆå·¦ï¼‰
+	MotorDriver2_Init();										//ç”µæœºé©±åŠ¨æ¨¡å—2åˆå§‹åŒ–ï¼ˆå³ï¼‰
+	SMotor3_Init();		  //ç›´æµç”µæœºåˆå§‹åŒ–ï¼ˆç›´æµç”µæœº3ï¼Œå‡é™ç”¨ï¼‰
+	BUMP_Init();		  //æ°´æ³µåˆå§‹åŒ–
+	HC_SR04_Init();		  //è¶…å£°æ³¢
+	Timer_Init(); 		  //å®šæ—¶å™¨
+	FMQ_Init();			  //èœ‚é¸£å™¨åˆå§‹åŒ–
 	OLED_Init();
-	FMQ_Init();
 	Serial_Init();
 	GPIO15_Init();
 	TIM1_Init();
 }
 
+// ç»Ÿä¸€åœæ­¢æ‰€æœ‰æ‰§è¡Œå™¨ï¼ˆæ€¥åœ / è¿›å…¥ç­‰å¾…æ—¶è°ƒç”¨ï¼‰
+// åªç”¨å¯æ¢å¤çš„åœæ­¢æ–¹å¼ï¼šé€Ÿåº¦æ¸…é›¶ + å…³æ°´æ³µ/èœ‚é¸£å™¨ï¼›
+// ä¸ç¢° TIM2 å’Œ PA1ï¼Œè¿™æ · 'G' æ¢å¤åŽç”µæœºè¿˜èƒ½æ­£å¸¸è½¬ã€‚
+static void StopAll(void) {
+    MotorDriverFullStop();   // ä¸¤ä¸ªé©±åŠ¨è½®åœ
+    SMotor3_SetSpeed(0);     // å‡é™ç”µæœºåœ
+    BUMP_GUAN();             // æ°´æ³µå…³
+    FMQ_GUAN();              // èœ‚é¸£å™¨å…³
+    Servo_StopAllMotions();  // å–æ¶ˆè¿›è¡Œä¸­çš„èˆµæœºå¹³æ»‘è¿åŠ¨
+    paint_first_enter = true;// å¤ä½æ¶‚ç™½é¦–æ¬¡è¿›å…¥æ ‡å¿—
+}
 
+// ç¦»å¼€æ¶‚ç™½çŠ¶æ€æ—¶çš„æ”¶å°¾ï¼šå…³æ³µã€åœå‡é™ã€å…³è‡‚ã€å¤ä½é¦–æ¬¡è¿›å…¥æ ‡å¿—
+static void PaintCleanup(void) {
+    BUMP_GUAN();
+    SMotor3_SetSpeed(0);
+    Servo_StartSmoothMotion(0, 80.0f, 40.0f, 2000);   // å…³è‡‚
+    Servo_StartSmoothMotion(1, 50.0f, 90.0f, 2000);
+    paint_first_enter = true;
+}
 
+// å¤„ç†ä¸²å£æŒ‡ä»¤ï¼š
+//   'T' = æ€¥åœï¼šåœæ‰€æœ‰æ‰§è¡Œå™¨ + é”å®šï¼ˆæœ€é«˜ä¼˜å…ˆçº§ï¼Œä»»ä½•åŠ¨ä½œä¸‹éƒ½ç«‹å³ç”Ÿæ•ˆï¼‰
+//   'G' = æ¢å¤è‡ªåŠ¨ï¼šå›žåˆ°ç­‰å¾…çŠ¶æ€ï¼Œå…ˆåœä½ç­‰äºº
+//   å…¶ä½™å­—ç¬¦ = æµç¨‹æŒ‡ä»¤ï¼Œåªåœ¨è‡ªåŠ¨æ¨¡å¼ä¸‹ç”Ÿæ•ˆ
 static void ProcessCommand(void) {
-    if(Serial_GetRxFlag()) {
+    if (Serial_GetRxFlag()) {
         uint8_t cmd = Serial_GetRxData();
-        sys_ctrl.last_cmd = cmd;  // ´æ´¢×îÐÂÖ¸Áî
-        
-        switch(cmd) {
-			
-	case 'W'://µÈ´ýÖ¸Áî  ´®¿Ú'W'
-        sys_ctrl.state = STATE_WAIT;
-        break;
-    case 'N'://Ã»ÓÐÕÒµ½Ê÷ ´®¿Ú·¢ËÍ  ¡®N¡¯		Ìø×ªµ½Ô­µØËÑË÷×´Ì¬  Ò²¿ÉÒÔ´®¿ÚÌø  ¡®s¡¯
-        sys_ctrl.state = STATE_NO_TREE;
-        break;
-	case 'S':		//Ô­µØËÑÑ°×´Ì¬'S'
-        sys_ctrl.state = STATE_SEARCH_TREE;		
-        break;
-    case 'U':		//½Ó½üÊ÷Ä¾	'U'
-        sys_ctrl.state = STATE_APPROACH_TREE;
-        break;
-    case 'P':		 // ÅçÍ¿×¼±¸'P' 
-        sys_ctrl.state = STATE_PAINT_PREP;
-        break;
-    case 'R':			//ºó³·	'R'
-        sys_ctrl.state = STATE_RETREAT;
-        break;
-    case'B':	// ·äÃùÌáÊ¾	'B'
-        sys_ctrl.state = STATE_RETREAT_BEEP;
-        break;
-	case 'T':
-        sys_ctrl.state = STATE_TING;
-		break;
 
-        
+        switch (cmd) {
+        case 'T':                 // æ€¥åœï¼šå…¶ä»–çŠ¶æ€åœæ‰€æœ‰+é”æœºï¼›æ‰‹åŠ¨å‡/é™æ—¶åœ+è®°ä½ç½®+å›žç­‰å¾…ï¼ˆä¸é”ï¼‰
+            if (sys_ctrl.state == STATE_LIFT_UP) {
+                lift_is_up = 1;               // å¾€ä¸Šèµ°æ—¶æ”¶åˆ°åœæ­¢ â†’ é»˜è®¤åœ¨é¡¶ç«¯
+                SMotor3_SetSpeed(0);          // åœå‡é™
+                sys_ctrl.state = STATE_WAIT;  // ä¸é”æœºï¼Œç›´æŽ¥å›žç­‰å¾…
+            } else if (sys_ctrl.state == STATE_LIFT_DOWN) {
+                lift_is_up = 0;               // å¾€ä¸‹èµ°æ—¶æ”¶åˆ°åœæ­¢ â†’ é»˜è®¤åœ¨åº•ç«¯
+                SMotor3_SetSpeed(0);
+                sys_ctrl.state = STATE_WAIT;
+            } else {
+                StopAll();                    // å…¶ä»–çŠ¶æ€ï¼šæ€¥åœ + é”æœº
+                run_mode = MODE_STOP;
+            }
+            break;
+        case 'G':                 // æ¢å¤è‡ªåŠ¨ï¼šå…ˆåœä½ç­‰äºº
+            run_mode = MODE_AUTO;
+            sys_ctrl.state = STATE_WAIT;
+            break;
+        default:                  // æµç¨‹æŒ‡ä»¤
+            if (run_mode == MODE_AUTO) {
+                switch (cmd) {
+                case 'W': sys_ctrl.state = STATE_WAIT;           break;
+                case 'N': sys_ctrl.state = STATE_NO_TREE;        break;
+                case 'S': sys_ctrl.state = STATE_SEARCH_TREE;    break;
+                case 'U': sys_ctrl.state = STATE_APPROACH_TREE;  break;
+                case 'P': sys_ctrl.state = STATE_PAINT_PREP;     break;
+                case 'R': sys_ctrl.state = STATE_RETREAT;        break;
+                case 'B': sys_ctrl.state = STATE_RETREAT_BEEP;   break;
+                case 'A': sys_ctrl.state = STATE_LIFT_UP;        break;
+                case 'X': sys_ctrl.state = STATE_LIFT_DOWN;      break;
+                }
+            }
+            break;
         }
     }
 }
-uint32_t GetTick(void) {
-    return timer_counter;  // Ìá¹©¾ßÌåÊµÏÖ
-}
-void System_StateMachine(void) {
-   // static uint8_t lift_phase = 0;
-    uint32_t current_time = GetTick();
-    ProcessCommand();
 
-    switch(sys_ctrl.state) {
+uint32_t GetTick(void) {
+    return timer_counter;  // è¿”å›žæ¯«ç§’çº§è®¡æ—¶
+}
+
+void System_StateMachine(void) {
+    uint32_t current_time = GetTick();
+    ProcessCommand();               // å…ˆå¤„ç†æŒ‡ä»¤ï¼ˆå«æ€¥åœ/æ¢å¤ï¼‰
+
+    if (run_mode != MODE_AUTO) {    // æ€¥åœé”å®šæ—¶ï¼Œä¸è·‘çŠ¶æ€æœº
+        return;
+    }
+
+    // çŠ¶æ€åˆ‡æ¢æ£€æµ‹ï¼šçŠ¶æ€å˜äº†å°±é‡ç½®æ—¶é—´æˆ³ï¼›ç¦»å¼€æ¶‚ç™½çŠ¶æ€æ—¶æ”¶å°¾ï¼ˆå…³æ³µ/å…³è‡‚ï¼‰
+    static SystemState last_state = STATE_WAIT;
+    if (sys_ctrl.state != last_state) {
+        if (last_state == STATE_PAINT_PREP) {
+            PaintCleanup();
+        }
+        last_state = sys_ctrl.state;
+        sys_ctrl.state_timestamp = current_time;
+    }
+
+    Servo_UpdateAllMotions();       // éžé˜»å¡žï¼šæŽ¨è¿›èˆµæœºå¹³æ»‘è¿åŠ¨
+
+    switch (sys_ctrl.state) {
     case STATE_WAIT:
-        if(sys_ctrl.last_cmd == STATE_NO_TREE) {
-            OLED_Clear();
-            OLED_ShowString(2, 1, "NO_TREE");
-            sys_ctrl.state = STATE_NO_TREE;//µÈ´ý×´Ì¬£¬Èç¹û½Óµ½Ã»ÓÐÕÒµ½Ê÷µÄÖ¸Áî¾ÍÌø×ªµ½Ã»ÓÐÕÒµ½Ê÷µÄ×´Ì¬£¬ÕÒµ½ÁË
-            sys_ctrl.state_timestamp = current_time;
-        }//else 
+        StopAll();                  // ç­‰å¾…æ—¶ç¡®ä¿æ‰§è¡Œå™¨åœå¹²å‡€
         break;
-	case STATE_NO_TREE://Ã»ÓÐÕÒµ½Ê÷µÄ×´Ì¬£¬Ìø×ªµ½Ô­µØËÑË÷Ê÷µÄ×´Ì¬
-		 sys_ctrl.state = STATE_SEARCH_TREE;
-         sys_ctrl.state_timestamp = current_time;
-		break;
+
+    case STATE_NO_TREE:             // æ²¡æ‰¾åˆ°æ ‘çŠ¶æ€ï¼šç›´æŽ¥è½¬åŽŸåœ°å¯»æ‰¾çŠ¶æ€
+        sys_ctrl.state = STATE_SEARCH_TREE;
+        break;
+
     case STATE_SEARCH_TREE:
-        // ±£³ÖÐý×ªËÑË÷
-        Motor1_SetSpeed(90);
+        Motor1_SetSpeed(90);        // åŽŸåœ°æ—‹è½¬å¯»æ‰¾
         Motor2_SetSpeed(-90);
-        
-        //Ô­µØËÑË÷×´Ì¬£¬Èç¹û³¬¹ýÊ±¼ä£¬¾Í»Øµ½µÈ´ýÖ¸Áî×´Ì¬£¬Èç¹û½Óµ½¿¿½üÊ÷µÄ×´Ì¬£¬¾ÍÌø×ªµ½½Ó½üÊ÷Ä¾×´Ì¬
-        if((current_time - sys_ctrl.state_timestamp >= 30) ){
-          // (sys_ctrl.last_cmd == STATE_APPROACH_TREE)) 
-			OLED_Clear();
+        // è¶…æ—¶æ²¡æ‰¾åˆ°ï¼Œå°±å›žåˆ°ç­‰å¾…æŒ‡ä»¤çŠ¶æ€
+        if (current_time - sys_ctrl.state_timestamp >= 30000) {
+            OLED_Clear();
             OLED_ShowString(2, 1, "chaoshi");
             MotorDriverFullStop();
             sys_ctrl.state = STATE_WAIT;
-            sys_ctrl.state_timestamp = current_time;
-        }else if(sys_ctrl.last_cmd == STATE_APPROACH_TREE) {
-			 sys_ctrl.state = STATE_APPROACH_TREE;
-             sys_ctrl.state_timestamp = current_time;}
+        }
         break;
 
     case STATE_APPROACH_TREE:
-        EnhancedUltrasonicControl();
-        // ¿¿½üÊ÷Ä¾×´Ì¬£¬Èç¹û¾àÀë¹»ÁË¾Í¿ªÊ¼Í¿°××¼±¸£¬Èç¹û³¬Ê±ÁË¾Íµ÷Õû×ªµ½µÈ´ýÖ¸Áî×´Ì¬
-        if(range()==5){sys_ctrl.state = STATE_PAINT_PREP;
-            sys_ctrl.state_timestamp = current_time;}
-		else if(current_time - sys_ctrl.state_timestamp >= 90) {
+        US_Update();                        // éžé˜»å¡žæŽ¨è¿›æµ‹è·çŠ¶æ€æœº
+        // è·ç¦»å¤Ÿè¿‘ï¼ˆâ‰¤5cmï¼‰å°±å¼€å§‹æ¶‚ç™½å‡†å¤‡ï¼›è¶…æ—¶å°±è½¬å›žç­‰å¾…æŒ‡ä»¤çŠ¶æ€
+        if (EnhancedUltrasonicControl()) {
+            sys_ctrl.state = STATE_PAINT_PREP;
+        } else if (current_time - sys_ctrl.state_timestamp >= 90000) {
             sys_ctrl.state = STATE_WAIT;
-            sys_ctrl.state_timestamp = current_time;
         }
         break;
 
-    case STATE_PAINT_PREP: {		//¿ªÊ¼Í¿°××´Ì¬£¬½áÊøºóÌø×ªµ½ºó³·×´Ì¬
-		
-        static bool first_enter = true;
-        if(first_enter) {
-            //Servo_SetAngle(0);
+    case STATE_PAINT_PREP: {        // æ¶‚ç™½çŠ¶æ€ï¼šæ ¹æ®å½“å‰ä½ç½®å†³å®šæ¶‚ç™½æ–¹å‘
+        if (paint_first_enter) {
             BUMP_KAI();
-            first_enter = false;
-        }
-
-        /* Éý½µ¿ØÖÆ */
-//        switch(lift_phase) {
-//        case 0:  // ÉÏÉý
-            SMotor3_SetSpeed(80);
-            if(current_time - sys_ctrl.state_timestamp > 17) {
-//                lift_phase = 1;
-                sys_ctrl.state_timestamp = current_time;
-//            }
-//            break;
-//        case 1:  // ÏÂ½µ
-            SMotor3_SetSpeed(-80);
-            if(current_time - sys_ctrl.state_timestamp >13 ) {
-                SMotor3_SetSpeed(0);
-				BUMP_GUAN();
-                sys_ctrl.state = STATE_RETREAT;
-                first_enter = true;
+            Servo_StartSmoothMotion(0, 40.0f, 80.0f, 2000);   // å¼€è‡‚ï¼ˆå–·å¤´ä¼¸å‡ºï¼‰
+            Servo_StartSmoothMotion(1, 90.0f, 50.0f, 2000);
+            // ä½Žä½å‘ä¸Šæ¶‚ã€é«˜ä½å‘ä¸‹æ¶‚ï¼ˆè¾¹åŠ¨è¾¹å–·ï¼‰
+            if (lift_is_up) {
+                SMotor3_SetSpeed(LIFT_DOWN_SPEED);   // é«˜ä½ â†’ å‘ä¸‹æ¶‚
+            } else {
+                SMotor3_SetSpeed(LIFT_UP_SPEED);     // ä½Žä½ â†’ å‘ä¸Šæ¶‚
             }
-//            break;
+            paint_first_enter = false;
         }
-        } 
-	break;
 
-    case STATE_RETREAT://ºó³·×´Ì¬£¬Ìø×ªµ½·äÃùÆ÷×´Ì¬
-		SMotor3_SetSpeed(0);
+        // èµ°å®Œä¸€ä¸ªè¡Œç¨‹åŽç»“æŸæ¶‚ç™½ï¼ˆæ–¹å‘ä¸åŒæ—¶é•¿ä¸åŒï¼‰
+        uint32_t travel_ms = lift_is_up ? LIFT_DOWN_TIME_MS : LIFT_UP_TIME_MS;
+        if (current_time - sys_ctrl.state_timestamp >= travel_ms) {
+            lift_is_up = !lift_is_up;   // ä½ç½®ç¿»è½¬
+            sys_ctrl.state = STATE_RETREAT;
+        }
+    }
+    break;
+
+    case STATE_RETREAT:             // åŽé€€çŠ¶æ€ï¼šåŽé€€åŽè½¬æç¤ºéŸ³çŠ¶æ€
+        SMotor3_SetSpeed(0);
         Motor1_SetSpeed(-80);
         Motor2_SetSpeed(-80);
-        if(current_time - sys_ctrl.state_timestamp > 5) {
+        if (current_time - sys_ctrl.state_timestamp > 5000) {
             MotorDriverFullStop();
             sys_ctrl.state = STATE_RETREAT_BEEP;
-            sys_ctrl.state_timestamp = current_time;
         }
         break;
 
-		case STATE_RETREAT_BEEP://·äÃùÆ÷£¬½áÊøºóµ½µÈ´ý×´Ì¬
+    case STATE_RETREAT_BEEP:        // åŽé€€æç¤ºéŸ³ï¼šå“å®ŒåŽåˆ°ç­‰å¾…çŠ¶æ€
         FMQ_KAI();
-        if(current_time - sys_ctrl.state_timestamp > 2) {
+        if (current_time - sys_ctrl.state_timestamp > 2000) {
             FMQ_GUAN();
             sys_ctrl.state = STATE_WAIT;
         }
         break;
-		
-		
-		case STATE_TING:
-			 /* ´íÎó´¦Àí */
-		TIM_Cmd(TIM2, DISABLE);        // ¹Ø±ÕPWMÊä³ö
-		GPIO_ResetBits( GPIOA , GPIO_Pin_1); // Ç¿ÖÆÀ­µÍÒý½Å
-		MotorDriverFullStop();                 // µç»ú¼±Í£
-		SMotor3_SetSpeed(0);   // Í£Ö¹Éý½µ
+
+    case STATE_LIFT_UP:             // æ‰‹åŠ¨å‡ï¼šèµ°åˆ°å¤´è‡ªåŠ¨åœ
+        if (lift_is_up) {           // å·²ç»åœ¨é«˜ä½ï¼Œä¸ç”¨åŠ¨
+            sys_ctrl.state = STATE_WAIT;
+            break;
+        }
+        SMotor3_SetSpeed(LIFT_UP_SPEED);
+        if (current_time - sys_ctrl.state_timestamp >= LIFT_UP_TIME_MS) {
+            SMotor3_SetSpeed(0);
+            lift_is_up = 1;
+            sys_ctrl.state = STATE_WAIT;
+        }
+        break;
+
+    case STATE_LIFT_DOWN:           // æ‰‹åŠ¨é™ï¼šèµ°åˆ°å¤´è‡ªåŠ¨åœ
+        if (!lift_is_up) {          // å·²ç»åœ¨ä½Žä½ï¼Œä¸ç”¨åŠ¨
+            sys_ctrl.state = STATE_WAIT;
+            break;
+        }
+        SMotor3_SetSpeed(LIFT_DOWN_SPEED);
+        if (current_time - sys_ctrl.state_timestamp >= LIFT_DOWN_TIME_MS) {
+            SMotor3_SetSpeed(0);
+            lift_is_up = 0;
+            sys_ctrl.state = STATE_WAIT;
+        }
         break;
     }
-
 }

@@ -12,7 +12,7 @@ void Motor2_Init(void);
 void Motor2_SetSpeed(int8_t Speed);
 
 
-/*GPIOB pin4|pin5*/
+/*GPIOB pin5|pin6*/
 void SMotor3_Init(void);
 void SMotor3_SetSpeed(int8_t Speed);
 #endif

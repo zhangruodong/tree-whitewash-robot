@@ -1,27 +1,15 @@
 #ifndef __HCSR04_H
 #define __HCSR04_H
-#include "stm32f10x.h"     
+#include "stm32f10x.h"
 
-// Device header
-
-/*PB3
-超声波模块 Trig 触发信号
-推挽输出（50MHz）
-HC-SR04 Trig
-
-
-PB4
-超声波模块 Echo 回波信号
-浮空输入
-HC-SR04 Echo
-EXTI4_IRQHandler
-EXTI_Line4（PB4）
-双边沿触发（上升/下降沿）
-抢占优先级0，子优先级2*/
+/* HC-SR04 ultrasonic module
+   Trig = PB3 (output), Echo = PB4 (input, EXTI4 both edges)
+   TIM4 (1 MHz / 1 ms) times the echo pulse; times (us) set in ISR. */
 
 void HC_SR04_Init(void);
-uint16_t range(void);
-
 void Timer_Init(void);
+
+uint8_t  US_Update(void);      /* advance measurement, returns 1 when result ready */
+uint16_t US_GetDistance(void); /* last averaged distance in cm */
 
 #endif

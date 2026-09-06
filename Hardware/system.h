@@ -2,60 +2,50 @@
 #define __SYSTEM_H
 #include "stm32f10x.h"
 #include <stdlib.h>
-#include <math.h> 
+#include <math.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include "Delay.h"
 #include "OLED.h"
 #include "HCSR04.h"
-#include "ADCServo.h"
 #include "MotorDriver.h"
 #include "USART.h"
-#include "system.h"
 #include "string.h"
 #include "SelfTest.h"
-#include  "PumpBuzzer.h"
-#include  "Servo.h"
-#include  "Motor.h"
-/* ÏµÍ³×´Ì¬Ã¶¾Ù */
-// ÏÈÉùÃ÷Ã¶¾ÙÀàĞÍ
+#include "PumpBuzzer.h"
+#include "Servo.h"
+#include "Motor.h"
+
+/* ç³»ç»ŸçŠ¶æ€æšä¸¾ï¼ˆå€¼å°±æ˜¯ä¸²å£æŒ‡ä»¤å­—ç¬¦ï¼‰ */
 typedef enum {
-    STATE_WAIT = 'W',   // µÈ´ıÖ¸Áî
-	STATE_NO_TREE='N',//Ã»ÓĞÕÒµ½Ê÷
-    STATE_SEARCH_TREE = 'S',// ËÑË÷Ê÷Ä¾
-    STATE_APPROACH_TREE = 'U',//½Ó½üÊ÷Ä¾
-    STATE_PAINT_PREP = 'P', // ÅçÍ¿×¼±¸
-    STATE_RETREAT = 'R',    // ºó³·
-    STATE_RETREAT_BEEP = 'B',// ·äÃùÌáÊ¾
-	STATE_TING='T'
+    STATE_WAIT = 'W',           // ç­‰å¾…æŒ‡ä»¤
+    STATE_NO_TREE = 'N',        // æ²¡æ‰¾åˆ°æ ‘
+    STATE_SEARCH_TREE = 'S',    // åŸåœ°å¯»æ‰¾æ ‘
+    STATE_APPROACH_TREE = 'U',  // æ¥è¿‘æ ‘æœ¨
+    STATE_PAINT_PREP = 'P',     // å¼€å§‹æ¶‚ç™½å‡†å¤‡
+    STATE_RETREAT = 'R',        // åé€€
+    STATE_RETREAT_BEEP = 'B',   // åé€€æç¤ºéŸ³
+    STATE_LIFT_UP = 'A',        // æ‰‹åŠ¨å‡
+    STATE_LIFT_DOWN = 'X'       // æ‰‹åŠ¨é™
 } SystemState;
+
+/* è¿è¡Œæ¨¡å¼ï¼šè‡ªåŠ¨ / æ€¥åœé”å®š */
+typedef enum {
+    MODE_AUTO = 0,   // è‡ªåŠ¨ï¼šå¬æ‘„åƒå¤´æµç¨‹
+    MODE_STOP = 1    // æ€¥åœï¼šé”ä½ï¼Œåªæœ‰ 'G' æŒ‡ä»¤èƒ½æ¢å¤
+} RunMode;
+
 typedef struct {
-    SystemState state;           // µ±Ç°ÏµÍ³×´Ì¬
-    uint32_t state_timestamp;    // ×´Ì¬½øÈëÊ±¼ä´Á£¨ºÁÃë£©
-    uint8_t last_cmd;      // ´ı´¦ÀíÖ¸Áî            // ×îĞÂ½ÓÊÕµÄ´®¿ÚÖ¸Áî
-  
+    SystemState state;           // å½“å‰ç³»ç»ŸçŠ¶æ€
+    uint32_t state_timestamp;    // çŠ¶æ€è¿›å…¥æ—¶é—´ï¼ˆæ¯«ç§’ï¼‰
 } SystemCtrl;
 
-/* ¹«¹²º¯ÊıÉùÃ÷ */
+/* å‡½æ•°å£°æ˜ */
 void System_StateMachine(void);
 uint32_t GetTick(void);
 void Hardware_Init(void);
 void TIM1_Init(void);
 void GPIO15_Init(void);
 void TIM1_UP_IRQHandler(void);
-void Hardware_Init(void);
-void System_StateMachine(void) ;
-
-///* ÔÚsystem.hÖĞÌí¼ÓÖ¸Áîºê¶¨Òå */
-//#define CMD_WAIT 'W'	//µÈ´ıÖ¸Áî
-//#define CMD_NO_TREE      'N'  // Î´·¢ÏÖÊ÷Ä¾  
-//#define CMD_SEARCH_TREE  'S'	//Ô­µØËÑÑ°
-////#define CMD_UNTREATED  	 'U'  // ·¢ÏÖÎ´Í¿°×Ê÷
-//#define CMD_APPROACH_TREE  'U'	////½Ó½üÊ÷Ä¾
-//#define CMD_PAINT_PREP 	'P' // ÅçÍ¿×¼±¸
-//#define CMD_RETREAT  'R'   // ºó³·
-//#define CMD_RETREAT_BEEP  'B'// ·äÃùÌáÊ¾
-//#define CMD_TING         'T'  // Í£Ö¹µ±Ç°¶¯×÷
-
 
 #endif

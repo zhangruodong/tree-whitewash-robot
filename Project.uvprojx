@@ -761,16 +761,6 @@
               <FilePath>.\Hardware\SelfTest.h</FilePath>
             </File>
             <File>
-              <FileName>ADCServo.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Hardware\ADCServo.c</FilePath>
-            </File>
-            <File>
-              <FileName>ADCServo.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\ADCServo.h</FilePath>
-            </File>
-            <File>
               <FileName>MotorDriver.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Hardware\MotorDriver.c</FilePath>
