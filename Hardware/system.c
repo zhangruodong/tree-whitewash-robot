@@ -1,4 +1,7 @@
 #include "stm32f10x.h"
+#include "stm32f10x_iwdg.h"
+#include "stm32f10x_dbgmcu.h"
+#include "stm32f10x_adc.h"
 #include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
@@ -22,12 +25,36 @@
 #define LIFT_UP_TIME_MS    10000   // 低位→高位（10秒）
 #define LIFT_DOWN_TIME_MS  10000   // 高位→低位（10秒）
 
+// 升降底端限位开关：PB7（输入上拉，开关另一端接 GND，压下=低电平）
+#define LIFT_LIMIT_PORT    GPIOB
+#define LIFT_LIMIT_PIN     GPIO_Pin_7
+
+// 串口通信超时：非等待状态超过此时间没收到任何指令，自动回安全等待态。
+// 需大于最长状态"接近树木"的 90 秒，避免误触发；按 AI 实际指令节奏可调小。
+#define COMM_TIMEOUT_MS  120000
+
+// ===== 电池电压检测 + 欠压保护 =====
+// 12V 锂电池 = 3 串三元（3S）：满电 12.6V，标称 11.1V，欠压保护 9.0V。
+// 分压：上臂 R1=100k 接电池+，下臂 R2=33k 接 GND，中点接 PA4（ADC_IN4）。
+// 分压比 33/(100+33)=0.248，ADC 满量程 4095 对应 13.30V。
+#define BAT_ADC_PORT       GPIOA
+#define BAT_ADC_PIN        GPIO_Pin_4
+#define BAT_ADC_CHANNEL    ADC_Channel_4
+#define BAT_ADC_SAMPLE     ADC_SampleTime_239Cycles5   // 长采样时间匹配 100k 高源阻抗
+#define BAT_FULL_SCALE_MV  13300   // ADC 满量程对应电池电压（mV）
+#define BAT_UNDER_MV       9000    // 欠压保护阈值 9.0V（单节 3.0V）
+#define BAT_RECOVER_MV     9600    // 恢复阈值 9.6V（迟滞 0.6V，防振荡）
+#define BAT_LOW_CNT        3       // 连续越界 N 次才动作（去抖）
+#define BAT_SAMPLE_MS      500     // 采样周期（ms）
+#define BAT_AVG_N          8       // 滑动平均窗口
+
 // 全局变量：1ms 定时计数（TIM1 每 1ms 中断一次）
 volatile uint32_t timer_counter = 0;
 static SystemCtrl sys_ctrl = {STATE_WAIT, 0};
 static RunMode run_mode = MODE_AUTO;   // 当前模式：自动 / 急停锁定
 static bool paint_first_enter = true;  // 涂白状态首次进入标志
 static uint8_t lift_is_up = 0;         // 升降当前位置：0=低位(下降位)，1=高位
+static uint32_t last_cmd_time = 0;     // 最后收到串口指令的时间戳（通信超时保护用）
 
 // TIM1初始化函数（1ms 节拍）
 void TIM1_Init(void) {
@@ -98,6 +125,7 @@ void Hardware_Init(void)  //硬件初始化
 	MotorDriver1_Init();										//电机驱动模块1初始化（左）
 	MotorDriver2_Init();										//电机驱动模块2初始化（右）
 	SMotor3_Init();		  //直流电机初始化（直流电机3，升降用）
+	LiftSwitch_Init();	  //升降底端限位开关初始化（PB7，输入上拉）
 	BUMP_Init();		  //水泵初始化
 	HC_SR04_Init();		  //超声波
 	Timer_Init(); 		  //定时器
@@ -106,6 +134,118 @@ void Hardware_Init(void)  //硬件初始化
 	Serial_Init();
 	GPIO15_Init();
 	TIM1_Init();
+}
+
+// ===== 独立看门狗（IWDG）=====
+// 主循环跑飞时硬件兜底复位。LSI 40kHz / 256 = 156.25Hz，
+// 重装 399 → 超时约 2.5s（LSI 30~60kHz 偏差下实际 1.7~3.4s）。
+// 注意：IWDG 一旦使能只能靠复位关闭，所以调试时用 DBGMCU 把它冻结，
+// 否则断点暂停期间会被反复复位。
+#define WDG_RELOAD  399
+
+void WDG_Init(void)
+{
+    /* 调试模式下冻结 IWDG：CPU 被调试器暂停时不计数，避免打断调试 */
+    DBGMCU_Config(DBGMCU_IWDG_STOP, ENABLE);
+
+    /* 使能写访问 → 设置预分频和重装值 → 立即装载 → 启动 */
+    IWDG_WriteAccessCmd(IWDG_WriteAccess_Enable);
+    IWDG_SetPrescaler(IWDG_Prescaler_256);
+    IWDG_SetReload(WDG_RELOAD);
+    IWDG_ReloadCounter();
+    IWDG_Enable();
+}
+
+void WDG_Feed(void)
+{
+    IWDG_ReloadCounter();   // 每轮主循环喂一次
+}
+
+// ===== 升降底端限位开关 + 上电找零 =====
+// 限位开关 PB7 输入上拉，另一端接 GND：压下时 PB7 读到低电平。
+// 上电时让升降往下走到压上开关，就能确定"现在在底端"，
+// 从而重建 lift_is_up，解决断电后位置标志丢失的问题。
+void LiftSwitch_Init(void)
+{
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
+
+    GPIO_InitTypeDef GPIO_InitStructure;
+    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_IPU;      // 输入上拉：压下=低电平
+    GPIO_InitStructure.GPIO_Pin   = LIFT_LIMIT_PIN;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(LIFT_LIMIT_PORT, &GPIO_InitStructure);
+}
+
+// 读取限位开关：返回 1 = 开关被压下（升降在底端）
+static uint8_t LiftLimit_Pressed(void)
+{
+    return (GPIO_ReadInputDataBit(LIFT_LIMIT_PORT, LIFT_LIMIT_PIN) == Bit_RESET);
+}
+
+// 找零失败：停升降，OLED 显示失败原因，返回 0
+// （OLED 字体只支持 ASCII，故用英文提示）
+static int LiftHome_Fail(char *reason)
+{
+    SMotor3_SetSpeed(0);
+    OLED_Clear();
+    OLED_ShowString(1, 1, "FindHome Fail");
+    OLED_ShowString(2, 1, reason);
+    return 0;
+}
+
+// 上电找零：往下走直到压上底端限位开关，重建 lift_is_up=0。
+// 全程轮询 'T' 可急停；返回 1 = 成功，0 = 被急停或超时打断。
+int Lift_FindHome(void)
+{
+    uint32_t start;
+
+    /* 若上电时开关已被压下（升降停在底端），先往上抬直到开关释放，
+       离开死区后再往下找，确保能重新压上、准确确定底端位置 */
+    if (LiftLimit_Pressed()) {
+        SMotor3_SetSpeed(LIFT_UP_SPEED);
+        start = timer_counter;
+        while (LiftLimit_Pressed()) {
+            if (Serial_GetRxFlag() && Serial_GetRxData() == 'T') {
+                SMotor3_SetSpeed(0);
+                return 0;
+            }
+            if (timer_counter - start >= 2000) {   // 2s 还没释放：开关卡死
+                return LiftHome_Fail("Switch Jammed");
+            }
+        }
+        SMotor3_SetSpeed(0);
+    }
+
+    /* 往下走，直到压上底端限位开关（或超时） */
+    SMotor3_SetSpeed(LIFT_DOWN_SPEED);
+    start = timer_counter;
+    while (!LiftLimit_Pressed()) {
+        if (Serial_GetRxFlag() && Serial_GetRxData() == 'T') {   // 随时可急停
+            SMotor3_SetSpeed(0);
+            return 0;
+        }
+        if (timer_counter - start >= LIFT_DOWN_TIME_MS + 2000) { // 超时：开关异常
+            return LiftHome_Fail("No Limit Hit");
+        }
+    }
+    SMotor3_SetSpeed(0);
+
+    /* 碰到底端：记录位置，再往上抬直到开关释放（离开死区，避免一直压着） */
+    lift_is_up = 0;
+    SMotor3_SetSpeed(LIFT_UP_SPEED);
+    start = timer_counter;
+    while (LiftLimit_Pressed()) {
+        if (Serial_GetRxFlag() && Serial_GetRxData() == 'T') {
+            SMotor3_SetSpeed(0);
+            return 0;
+        }
+        if (timer_counter - start >= 2000) {
+            return LiftHome_Fail("Switch Jammed");
+        }
+    }
+    SMotor3_SetSpeed(0);
+
+    return 1;
 }
 
 // 统一停止所有执行器（急停 / 进入等待时调用）
@@ -135,6 +275,7 @@ static void PaintCleanup(void) {
 //   其余字符 = 流程指令，只在自动模式下生效
 static void ProcessCommand(void) {
     if (Serial_GetRxFlag()) {
+        last_cmd_time = timer_counter;   // 记录最后收到指令的时间
         uint8_t cmd = Serial_GetRxData();
 
         switch (cmd) {
@@ -179,12 +320,176 @@ uint32_t GetTick(void) {
     return timer_counter;  // 返回毫秒级计时
 }
 
+// 开机显示复位原因（排查"为什么重启了"）
+// OLED 字库只支持 ASCII，故用英文；显示后清除复位标志，避免下次误判。
+void ShowResetReason(void)
+{
+    OLED_ShowString(2, 1, "RST:");
+    if (RCC_GetFlagStatus(RCC_FLAG_IWDGRST) != RESET) {
+        OLED_ShowString(3, 1, "Watchdog");     // 看门狗复位
+    } else if (RCC_GetFlagStatus(RCC_FLAG_SFTRST) != RESET) {
+        OLED_ShowString(3, 1, "Software");     // 软件复位
+    } else if (RCC_GetFlagStatus(RCC_FLAG_PORRST) != RESET) {
+        OLED_ShowString(3, 1, "PowerOn");      // 上电复位（POR 和 PIN 同时置位，先查 POR）
+    } else if (RCC_GetFlagStatus(RCC_FLAG_PINRST) != RESET) {
+        OLED_ShowString(3, 1, "NRST Pin");     // 仅复位脚复位
+    } else {
+        OLED_ShowString(3, 1, "Unknown");
+    }
+    RCC_ClearFlag();                            // 清除复位标志
+}
+
+// 电池电压检测相关状态
+static uint16_t bat_buf[BAT_AVG_N];   // 滑动平均环形缓冲
+static uint8_t  bat_idx = 0;          // 缓冲写指针
+static uint32_t bat_sum = 0;          // 缓冲累加和
+static uint8_t  bat_count = 0;        // 已填样本数（<N 时按实际数平均）
+static uint16_t batt_mv = 0;          // 滤波后的电池电压（mV）
+static uint8_t  batt_low = 0;         // 1 = 当前处于欠压保护状态
+static uint8_t  batt_low_cnt = 0;     // 越界去抖计数（触发/恢复共用）
+static uint32_t bat_last_sample = 0;  // 上次采样时间戳
+
+void ADC_Battery_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStructure;
+    ADC_InitTypeDef ADC_InitStructure;
+
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
+    RCC_ADCCLKConfig(RCC_PCLK2_Div6);               // ADC 时钟 = 72MHz/6 = 12MHz
+
+    /* PA4 = 模拟输入 */
+    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AIN;
+    GPIO_InitStructure.GPIO_Pin   = BAT_ADC_PIN;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(BAT_ADC_PORT, &GPIO_InitStructure);
+
+    /* 单通道、软件触发、单次转换 */
+    ADC_InitStructure.ADC_Mode               = ADC_Mode_Independent;
+    ADC_InitStructure.ADC_ScanConvMode       = DISABLE;
+    ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
+    ADC_InitStructure.ADC_ExternalTrigConv   = ADC_ExternalTrigConv_None;
+    ADC_InitStructure.ADC_DataAlign          = ADC_DataAlign_Right;
+    ADC_InitStructure.ADC_NbrOfChannel       = 1;
+    ADC_Init(ADC1, &ADC_InitStructure);
+
+    ADC_RegularChannelConfig(ADC1, BAT_ADC_CHANNEL, 1, BAT_ADC_SAMPLE);
+    ADC_Cmd(ADC1, ENABLE);
+
+    /* 上电校准 */
+    ADC_ResetCalibration(ADC1);
+    while (ADC_GetResetCalibrationStatus(ADC1) == SET);
+    ADC_StartCalibration(ADC1);
+    while (ADC_GetCalibrationStatus(ADC1) == SET);
+}
+
+/* 单次采样：启动转换并等待完成（约 20us，带 2ms 超时兜底） */
+static uint16_t BAT_ReadRaw(void)
+{
+    uint32_t t;
+
+    ADC_ClearFlag(ADC1, ADC_FLAG_EOC);
+    ADC_SoftwareStartConvCmd(ADC1, ENABLE);
+
+    t = timer_counter;
+    while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET) {
+        if (timer_counter - t >= 2) return 0;   // 2ms 超时兜底
+    }
+    return ADC_GetConversionValue(ADC1);
+}
+
+/* 欠压触发：停所有执行器 + 锁定 + OLED 报警（蜂鸣在状态机里周期驱动） */
+static void Battery_LowAction(void)
+{
+    StopAll();
+    run_mode = MODE_STOP;              // 锁定（等同急停，'G' 可恢复）
+    OLED_Clear();
+    OLED_ShowString(1, 1, "LowBattery!");
+    OLED_ShowString(2, 1, "Batt:");
+    OLED_ShowNum(2, 6, batt_mv / 1000, 2);
+    OLED_ShowChar(2, 8, '.');
+    OLED_ShowNum(2, 9, (batt_mv % 1000) / 100, 1);
+    OLED_ShowChar(2, 10, 'V');
+    OLED_ShowString(3, 1, "Charge or swap");
+}
+
+/* 周期调用（内部 500ms 节流）：采样 + 滤波 + 欠压保护 + 等待态显示电压 */
+static void Battery_Update(void)
+{
+    uint16_t raw;
+    uint32_t avg;
+
+    if (timer_counter - bat_last_sample < BAT_SAMPLE_MS) return;
+    bat_last_sample = timer_counter;
+
+    /* 滑动平均：先减旧再加新 */
+    raw = BAT_ReadRaw();
+    if (bat_count < BAT_AVG_N) {
+        bat_buf[bat_count++] = raw;
+        bat_sum += raw;
+    } else {
+        bat_sum -= bat_buf[bat_idx];
+        bat_buf[bat_idx] = raw;
+        bat_sum += raw;
+        bat_idx = (bat_idx + 1) % BAT_AVG_N;
+    }
+    avg = bat_count ? bat_sum / bat_count : raw;
+
+    /* ADC → 电压（mV）：V = avg * 13300 / 4095 */
+    batt_mv = (uint16_t)(avg * BAT_FULL_SCALE_MV / 4095);
+
+    /* 欠压保护 + 迟滞 */
+    if (!batt_low) {
+        if (batt_mv < BAT_UNDER_MV) {
+            if (++batt_low_cnt >= BAT_LOW_CNT) {
+                batt_low_cnt = 0;
+                batt_low = 1;
+                Battery_LowAction();
+            }
+        } else {
+            batt_low_cnt = 0;
+        }
+    } else {
+        if (batt_mv > BAT_RECOVER_MV) {
+            if (++batt_low_cnt >= BAT_LOW_CNT) {
+                batt_low_cnt = 0;
+                batt_low = 0;
+            }
+        } else {
+            batt_low_cnt = 0;
+        }
+    }
+
+    /* 正常且等待态：刷新电压显示（第 4 行，格式如 "Batt:11.8V"） */
+    if (!batt_low && sys_ctrl.state == STATE_WAIT) {
+        OLED_ShowString(4, 1, "Batt:");
+        OLED_ShowNum(4, 6, batt_mv / 1000, 2);
+        OLED_ShowChar(4, 8, '.');
+        OLED_ShowNum(4, 9, (batt_mv % 1000) / 100, 1);
+        OLED_ShowChar(4, 10, 'V');
+    }
+}
+
 void System_StateMachine(void) {
     uint32_t current_time = GetTick();
     ProcessCommand();               // 先处理指令（含急停/恢复）
 
-    if (run_mode != MODE_AUTO) {    // 急停锁定时，不跑状态机
+    Battery_Update();               // 电池电压采样 + 欠压保护（任何模式都跑）
+
+    if (run_mode != MODE_AUTO) {    // 急停/欠压锁定时，不跑状态机
+        if (batt_low) {             // 欠压报警：1s 周期蜂鸣
+            if ((current_time / 1000) & 1) FMQ_KAI();
+            else FMQ_GUAN();
+        }
         return;
+    }
+
+    // 串口通信超时保护：非等待状态长时间收不到指令，自动回安全等待态
+    if (sys_ctrl.state != STATE_WAIT &&
+        current_time - last_cmd_time >= COMM_TIMEOUT_MS) {
+        StopAll();
+        sys_ctrl.state = STATE_WAIT;
+        last_cmd_time = current_time;
     }
 
     // 状态切换检测：状态变了就重置时间戳；离开涂白状态时收尾（关泵/关臂）

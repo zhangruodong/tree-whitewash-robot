@@ -47,5 +47,11 @@ void Hardware_Init(void);
 void TIM1_Init(void);
 void GPIO15_Init(void);
 void TIM1_UP_IRQHandler(void);
+void WDG_Init(void);
+void WDG_Feed(void);
+void LiftSwitch_Init(void);
+int  Lift_FindHome(void);
+void ShowResetReason(void);
+void ADC_Battery_Init(void);
 
 #endif
