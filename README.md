@@ -80,6 +80,7 @@ feizuse - 全 - 副本/
 1. 用 Keil MDK 打开 `Project.uvprojx`。
 2. 确认目标器件为 STM32F103C8（64KB Flash）。
 3. 编译（Build），通过 ST-Link / J-Link 下载。
+4. 需要发布固件时：Keil 菜单 Options for Target → Output 勾选「Create HEX File」，编译后 `.hex` 生成在 `Objects/` 目录。
 
 ## 注意事项
 
