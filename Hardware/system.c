@@ -54,6 +54,7 @@ static SystemCtrl sys_ctrl = {STATE_WAIT, 0};
 static RunMode run_mode = MODE_AUTO;   // 当前模式：自动 / 急停锁定
 static bool paint_first_enter = true;  // 涂白状态首次进入标志
 static uint8_t lift_is_up = 0;         // 升降当前位置：0=低位(下降位)，1=高位
+static uint8_t home_fail = 0;          // 上电找零失败标志：1=失败，OLED 持续提示
 static uint32_t last_cmd_time = 0;     // 最后收到串口指令的时间戳（通信超时保护用）
 
 // TIM1初始化函数（1ms 节拍）
@@ -186,6 +187,7 @@ static uint8_t LiftLimit_Pressed(void)
 // （OLED 字体只支持 ASCII，故用英文提示）
 static int LiftHome_Fail(char *reason)
 {
+    home_fail = 1;                     // 记录失败，OLED 状态显示里持续提示
     SMotor3_SetSpeed(0);
     OLED_Clear();
     OLED_ShowString(1, 1, "FindHome Fail");
@@ -398,22 +400,14 @@ static uint16_t BAT_ReadRaw(void)
     return ADC_GetConversionValue(ADC1);
 }
 
-/* 欠压触发：停所有执行器 + 锁定 + OLED 报警（蜂鸣在状态机里周期驱动） */
+/* 欠压触发：停所有执行器 + 锁定（OLED 报警画面由 OLED_ShowStatus 统一绘制） */
 static void Battery_LowAction(void)
 {
     StopAll();
     run_mode = MODE_STOP;              // 锁定（等同急停，'G' 可恢复）
-    OLED_Clear();
-    OLED_ShowString(1, 1, "LowBattery!");
-    OLED_ShowString(2, 1, "Batt:");
-    OLED_ShowNum(2, 6, batt_mv / 1000, 2);
-    OLED_ShowChar(2, 8, '.');
-    OLED_ShowNum(2, 9, (batt_mv % 1000) / 100, 1);
-    OLED_ShowChar(2, 10, 'V');
-    OLED_ShowString(3, 1, "Charge or swap");
 }
 
-/* 周期调用（内部 500ms 节流）：采样 + 滤波 + 欠压保护 + 等待态显示电压 */
+/* 周期调用（内部 500ms 节流）：采样 + 滤波 + 欠压保护（显示交给 OLED_ShowStatus） */
 static void Battery_Update(void)
 {
     uint16_t raw;
@@ -460,13 +454,83 @@ static void Battery_Update(void)
         }
     }
 
-    /* 正常且等待态：刷新电压显示（第 4 行，格式如 "Batt:11.8V"） */
-    if (!batt_low && sys_ctrl.state == STATE_WAIT) {
-        OLED_ShowString(4, 1, "Batt:");
-        OLED_ShowNum(4, 6, batt_mv / 1000, 2);
-        OLED_ShowChar(4, 8, '.');
-        OLED_ShowNum(4, 9, (batt_mv % 1000) / 100, 1);
-        OLED_ShowChar(4, 10, 'V');
+}
+
+// ===== OLED 实时运行状态显示 =====
+// 每 500ms 刷新整屏：状态 / 模式+电压 / 距离 / 提示；欠压时整屏切报警画面。
+// OLED 字库只支持 ASCII，状态名用英文缩写。
+static char *StateName(SystemState s)
+{
+    switch (s) {
+    case STATE_WAIT:          return "WAIT";
+    case STATE_NO_TREE:       return "NOTREE";
+    case STATE_SEARCH_TREE:   return "SEARCH";
+    case STATE_APPROACH_TREE: return "APPROACH";
+    case STATE_PAINT_PREP:    return "PAINT";
+    case STATE_RETREAT:       return "RETREAT";
+    case STATE_RETREAT_BEEP:  return "BEEP";
+    case STATE_LIFT_UP:       return "LIFT_UP";
+    case STATE_LIFT_DOWN:     return "LIFT_DN";
+    default:                  return "????";
+    }
+}
+
+static void OLED_ShowStatus(void)
+{
+    static uint32_t last = 0;
+    uint16_t dist;
+
+    if (timer_counter - last < 500) return;
+    last = timer_counter;
+
+    /* 欠压：整屏切到报警画面（最高优先级） */
+    if (batt_low) {
+        OLED_ShowString(1, 1, "LowBattery!     ");
+        OLED_ShowString(2, 1, "Batt:");
+        OLED_ShowNum(2, 6, batt_mv / 1000, 2);
+        OLED_ShowChar(2, 8, '.');
+        OLED_ShowNum(2, 9, (batt_mv % 1000) / 100, 1);
+        OLED_ShowChar(2, 10, 'V');
+        OLED_ShowString(3, 1, "Charge or swap  ");
+        OLED_ShowString(4, 1, "                ");
+        return;
+    }
+
+    /* 第 1 行：状态 */
+    OLED_ShowString(1, 1, "State:");
+    OLED_ShowString(1, 7, StateName(sys_ctrl.state));
+
+    /* 第 2 行：模式 + 电压 */
+    OLED_ShowString(2, 1, (run_mode == MODE_AUTO) ? "AUTO " : "STOP ");
+    OLED_ShowString(2, 6, "Batt:");
+    OLED_ShowNum(2, 11, batt_mv / 1000, 2);
+    OLED_ShowChar(2, 13, '.');
+    OLED_ShowNum(2, 14, (batt_mv % 1000) / 100, 1);
+    OLED_ShowChar(2, 15, 'V');
+
+    /* 第 3 行：超声波距离（右对齐；≥400 表示没测到/超范围，显示 Far） */
+    dist = US_GetDistance();
+    OLED_ShowString(3, 1, "Dist:");
+    if (dist >= 400) {
+        OLED_ShowString(3, 6, "Far ");
+    } else if (dist >= 100) {
+        OLED_ShowNum(3, 6, dist, 3);
+        OLED_ShowString(3, 9, "cm");
+    } else if (dist >= 10) {
+        OLED_ShowString(3, 6, " ");
+        OLED_ShowNum(3, 7, dist, 2);
+        OLED_ShowString(3, 9, "cm");
+    } else {
+        OLED_ShowString(3, 6, "  ");
+        OLED_ShowNum(3, 8, dist, 1);
+        OLED_ShowString(3, 9, "cm");
+    }
+
+    /* 第 4 行：提示（找零失败持续提示，否则清空） */
+    if (home_fail) {
+        OLED_ShowString(4, 1, "NoHome!         ");
+    } else {
+        OLED_ShowString(4, 1, "                ");
     }
 }
 
@@ -475,6 +539,8 @@ void System_StateMachine(void) {
     ProcessCommand();               // 先处理指令（含急停/恢复）
 
     Battery_Update();               // 电池电压采样 + 欠压保护（任何模式都跑）
+
+    OLED_ShowStatus();              // 周期刷新 OLED：状态/模式/电压/距离
 
     if (run_mode != MODE_AUTO) {    // 急停/欠压锁定时，不跑状态机
         if (batt_low) {             // 欠压报警：1s 周期蜂鸣
@@ -518,8 +584,6 @@ void System_StateMachine(void) {
         Motor2_SetSpeed(-90);
         // 超时没找到，就回到等待指令状态
         if (current_time - sys_ctrl.state_timestamp >= 30000) {
-            OLED_Clear();
-            OLED_ShowString(2, 1, "chaoshi");
             MotorDriverFullStop();
             sys_ctrl.state = STATE_WAIT;
         }
