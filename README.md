@@ -91,3 +91,16 @@ feizuse - 全 - 副本/
 - **欠压迟滞（防振荡）**：触发保护用 9.0V、恢复用 9.6V，中间留 0.6V 迟滞。因为电机一停、负载减小，电池电压会回弹——没有迟滞就会陷入"停 → 电压回升 → 又启动 → 又跌 → 再停"的反复抖动；恢复后按 `G` 重新开始。
 - **看门狗调试**：IWDG 一旦启动只能靠复位关闭；调试时已用 `DBGMCU_IWDG_STOP` 冻结，否则断点一停就会被反复复位。被看门狗复位后，开机第 2/3 行会显示 `RST:Watchdog`。
 - **通信超时**：`COMM_TIMEOUT_MS = 120000`（120 秒），需大于最长状态"接近树木"的 90 秒，避免误触发；按 AI 实际指令节奏可调。
+
+## 许可
+
+本项目**自有代码**（`Hardware/`、`User/`、`System/`、`README.md`、`Project.uvprojx`）采用 **MIT 许可**，见 [LICENSE](LICENSE)。
+
+以下目录为**第三方代码，版权归各自所有者，不在本项目的 MIT 许可范围内**，其原始版权声明必须保留：
+
+| 目录 | 内容 | 版权 |
+|---|---|---|
+| `Library/` | STM32F10x 标准外设库 V3.5.0 | © 2011 STMicroelectronics |
+| `Start/` | CMSIS 内核文件、启动文件、`system_stm32f10x` | © ARM Limited / STMicroelectronics |
+
+> 注意：本项目使用的是 **StdPeriph 标准外设库**（老一代），其许可条款与新的 STM32Cube HAL（BSD-3-Clause）**不同**，不可等同看待。商用前请自行确认 ST 的授权条款。
