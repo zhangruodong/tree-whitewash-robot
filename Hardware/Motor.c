@@ -10,6 +10,7 @@ void Motor1_Init(void)
     /* 外设时钟使能 */
     // 注意：STM32的GPIO时钟默认关闭，使用前必须手动开启
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);  // 使能GPIOB时钟（原为GPIOA）
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);   // 开AFIO时钟：重映射与引脚重定义都要用
     GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable, ENABLE);
 	
     /* GPIO初始化结构体配置 */
@@ -22,9 +23,7 @@ void Motor1_Init(void)
     /* 说明：PB12/PB13 不是 JTAG 引脚（JTAG 占用的是 PA13/PA14/PA15/PB3/PB4）。
        上面关掉 JTAG 是为了给超声波的 PB3/PB4 让路（见 HCSR04.c），与 PB12/PB13 无关；
        SWD 仍然保留，可继续下载调试。
-       另注意：调用 GPIO_PinRemapConfig 需要先开 AFIO 时钟。此处依赖 Servo_Init() 已提前开启
-       （见 Hardware_Init 的调用顺序）；若单独调用本函数，需自己补上
-       RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE); */
+       AFIO 时钟已在本函数内显式开启，不再依赖初始化顺序。 */
     
     /* PWM初始化 */
     ZPWM1_Init();  // 配置 TIM3 通道1（PA6）输出 PWM
