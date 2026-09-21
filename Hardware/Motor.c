@@ -19,13 +19,15 @@ void Motor1_Init(void)
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;     // 高速模式适应电机驱动需求
     GPIO_Init(GPIOB, &GPIO_InitStructure);                // 应用配置到GPIOB端口
     
-    /* 特别注意：如果PB12/PB13复用为JTAG引脚（如SWD调试接口） */
-    // 需要禁用JTAG功能保留SWD，添加以下代码：
-    // RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
-    // GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable, ENABLE);
+    /* 说明：PB12/PB13 不是 JTAG 引脚（JTAG 占用的是 PA13/PA14/PA15/PB3/PB4）。
+       上面关掉 JTAG 是为了给超声波的 PB3/PB4 让路（见 HCSR04.c），与 PB12/PB13 无关；
+       SWD 仍然保留，可继续下载调试。
+       另注意：调用 GPIO_PinRemapConfig 需要先开 AFIO 时钟。此处依赖 Servo_Init() 已提前开启
+       （见 Hardware_Init 的调用顺序）；若单独调用本函数，需自己补上
+       RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE); */
     
     /* PWM初始化 */
-    ZPWM1_Init();  // 假设此函数配置TIM3通道1（PA6引脚）的PWM输出
+    ZPWM1_Init();  // 配置 TIM3 通道1（PA6）输出 PWM
 }
 
 /**
@@ -134,7 +136,7 @@ void SMotor3_Init(void)
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;       // 高速模式
     GPIO_Init(GPIOB, &GPIO_InitStructure);                  // 初始化GPIOB
 
-    SPWM3_Init();  // 初始化底层PWM（假设PWM输出引脚已配置，如PB0）
+    SPWM3_Init();  // 配置 TIM3 通道3（PB0）输出 PWM
 }
 
 /*----------------------------------------------------------

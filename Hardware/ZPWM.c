@@ -30,7 +30,7 @@ void ZPWM1_Init(void)
 	TIM_TimeBaseInitStructure.TIM_Period = 100 - 1;                 //计数周期，即ARR的值
 	TIM_TimeBaseInitStructure.TIM_Prescaler = 36 - 1;               //预分频器，即PSC的值
 	TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            //重复计数器，高级定时器才会用到
-	TIM_TimeBaseInit(TIM3, &TIM_TimeBaseInitStructure);             //将结构体变量交给TIM_TimeBaseInit，配置TIM2的时基单元
+	TIM_TimeBaseInit(TIM3, &TIM_TimeBaseInitStructure);             //将结构体变量交给TIM_TimeBaseInit，配置TIM3的时基单元
 	
 	/*输出比较初始化*/ 
 	TIM_OCInitTypeDef TIM_OCInitStructure;							//定义结构体变量
@@ -41,10 +41,10 @@ void ZPWM1_Init(void)
 	TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;       //输出极性，选择为高，若选择极性为低，则输出高低电平取反
 	TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;   //输出使能
 	TIM_OCInitStructure.TIM_Pulse = 0;								//初始的CCR值
-	TIM_OC1Init(TIM3, &TIM_OCInitStructure);                        //将结构体变量交给TIM_OC3Init，配置TIM2的输出比较通道3
+	TIM_OC1Init(TIM3, &TIM_OCInitStructure);                        //将结构体变量交给TIM_OC1Init，配置TIM3的输出比较通道1（对应PA6）
 	
 	/*TIM使能*/
-	TIM_Cmd(TIM3, ENABLE);			//使能TIM2，定时器开始运行
+	TIM_Cmd(TIM3, ENABLE);			//使能TIM3，定时器开始运行
 }
 
 /**
@@ -56,7 +56,7 @@ void ZPWM1_Init(void)
   */
 void ZPWM1_SetCompare1(uint16_t Compare)
 {
-	TIM_SetCompare1(TIM3, Compare);		//设置CCR3的值
+	TIM_SetCompare1(TIM3, Compare);		//设置CCR1的值
 }
 
 /**

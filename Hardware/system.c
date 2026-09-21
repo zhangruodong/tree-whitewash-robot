@@ -251,8 +251,8 @@ int Lift_FindHome(void)
 }
 
 // 统一停止所有执行器（急停 / 进入等待时调用）
-// 只用可恢复的停止方式：速度清零 + 关水泵/蜂鸣器；
-// 不碰 TIM2 和 PA1，这样 'G' 恢复后电机还能正常转。
+// 只用可恢复的停止方式：速度清零 + 关水泵/蜂鸣器 + 取消舵机平滑运动；
+// 不关闭 TIM2/TIM3 外设、不改引脚配置，这样 'G' 恢复后各执行器还能正常驱动。
 static void StopAll(void) {
     MotorDriverFullStop();   // 两个驱动轮停
     SMotor3_SetSpeed(0);     // 升降电机停
