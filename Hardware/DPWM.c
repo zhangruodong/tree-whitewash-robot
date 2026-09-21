@@ -14,8 +14,14 @@ void PWM_TIM2_Common_Init(void)
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);      // 开启TIM2时钟
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);      // 开启AFIO时钟（重映射需要）
     
-    /* 配置TIM2完全重映射 */
-    GPIO_PinRemapConfig(GPIO_FullRemap_TIM2, ENABLE);         // 将TIM2通道1-4映射到PC6,PC7,PB10,PB11
+    /* TIM2 通道映射：FullRemap -> CH1=PA15, CH2=PB3, CH3=PB10, CH4=PB11
+       （PC6/PC7 是 TIM3 的完全重映射，与 TIM2 无关，别抄错）
+       本文件只用 CH3/CH4 驱动两个舵机。之所以选 FullRemap 而不是 PartialRemap2：
+       PartialRemap2 会把 CH1 映射到 PA0，那是水泵的脚；
+       而 FullRemap 的 CH1 落在完全空闲的 PA15 上，只有 CH2 碰到 PB3（超声波 Trig）。
+       且本文件只调了 TIM_OC3Init/TIM_OC4Init，CH1/CH2 输出从未使能（CC1E/CC2E=0），
+       所以 PB3 实际不会被 TIM2 驱动，仍归超声波 Trig 使用。 */
+    GPIO_PinRemapConfig(GPIO_FullRemap_TIM2, ENABLE);
     
     /* 时基单元初始化 */
     TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;
@@ -60,7 +66,7 @@ void DPWM_Init(void)
   */
 void DPWM_SetCompare3(uint16_t Compare)
 {
-	TIM_SetCompare3(TIM2, Compare);	//设置CCR2的值
+	TIM_SetCompare3(TIM2, Compare);	//设置CCR3的值（对应 PB10）
 }
 
 
