@@ -6,7 +6,7 @@ void BUMP_Init(void) {
     // 开启GPIOA时钟
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
 
-    // 配置PA0为
+    // 配置PA0为推挽输出（水泵控制脚，高电平开泵）
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP ;   
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
@@ -34,12 +34,12 @@ void FMQ_Init(void) {
 	GPIO_InitTypeDef GPIO_InitStructure;					//定义结构体变量
 	
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;		//GPIO模式，赋值为推挽输出模式
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_14;				//GPIO引脚，赋值为第12号引脚
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_14;				//GPIO引脚，赋值为第14号引脚（蜂鸣器，低电平响）
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;		//GPIO速度，赋值为50MHz
 	
 	GPIO_Init(GPIOB, &GPIO_InitStructure);					//将赋值后的构体变量传递给GPIO_Init函数
 															//函数内部会自动根据结构体的参数配置相应寄存器
-															//实现GPIOB的
+															//实现GPIOB的引脚配置
 	GPIO_SetBits(GPIOB,GPIO_Pin_14);
 	
 }
