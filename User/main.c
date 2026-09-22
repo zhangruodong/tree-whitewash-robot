@@ -3,6 +3,8 @@
 
 extern volatile uint32_t timer_counter;
 int main(void){
+		/* 中断优先级分组：全工程只在这里设置一次，之后再调 NVIC_Init 都按这组解读 */
+		NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
 //		SystemInit();
 //		pinlv = SystemCoreClock;
 		Hardware_Init();

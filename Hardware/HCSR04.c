@@ -52,7 +52,6 @@ void HC_SR04_Init(void) {
     EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising_Falling;
     EXTI_Init(&EXTI_InitStructure);
 
-    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
     NVIC_InitTypeDef NVIC_InitStructure;
     NVIC_InitStructure.NVIC_IRQChannel = EXTI4_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
